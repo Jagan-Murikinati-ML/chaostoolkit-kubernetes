@@ -15,7 +15,7 @@ from kubernetes.stream.ws_client import ERROR_CHANNEL, STDOUT_CHANNEL
 
 from chaosk8s import _log_deprecated, create_k8s_api_client
 
-__all__ = ["terminate_pods", "exec_in_pods"]
+__all__ = ["terminate_pods", "exec_in_pods", "restart_pods"]
 logger = logging.getLogger("chaostoolkit")
 
 
@@ -265,6 +265,57 @@ def _select_pods(
             pods = pods[:qty]
 
     return pods
+
+
+def restart_pods(
+    label_selector: str = None,
+    name_pattern: str = None,
+    qty: int = 1,
+    rand: bool = False,
+    ns: str = "default",
+    secrets: Secrets = None,
+):
+    """
+    Restart containers by killing the main process inside them.
+    This keeps the same pod but restarts the container.
+    """
+    api = create_k8s_api_client(secrets)
+    v1 = client.CoreV1Api(api)
+
+    pods = _select_pods(
+        v1, label_selector, name_pattern, False, rand, "fixed", qty, ns, "alphabetic"
+    )
+
+    restarted_containers = []
+
+    for pod in pods:
+        pod_name = pod.metadata.name
+        logger.info(f"Restarting container in pod {pod_name}")
+
+        try:
+            # Kill the main process to restart container
+            exec_command = ["pkill", "-f", "java"]  # Adjust for your application
+
+            resp = stream.stream(
+                v1.connect_get_namespaced_pod_exec,
+                pod_name,
+                ns,
+                command=exec_command,
+                stderr=True,
+                stdin=False,
+                stdout=True,
+                tty=False,
+                _preload_content=False,
+            )
+            resp.run_forever(timeout=10)
+
+            logger.info(f"Successfully restarted container in pod {pod_name}")
+            restarted_containers.append(pod_name)
+
+        except Exception as e:
+            logger.warning(f"Failed to restart container in pod {pod_name}: {e}")
+
+    return restarted_containers
 
 
 def delete_pods(
