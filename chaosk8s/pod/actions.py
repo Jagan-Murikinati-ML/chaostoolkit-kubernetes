@@ -58,6 +58,7 @@ def terminate_pods(
     be used as the grace period (in seconds) to terminate the pods.
     Otherwise, the default pod's grace period will be used.
     """
+    print("Hello world - terminate function started!")
 
     api = create_k8s_api_client(secrets)
     v1 = client.CoreV1Api(api)
@@ -200,6 +201,58 @@ def _sort_by_pod_creation_timestamp(pod: V1Pod) -> datetime.datetime:
     Function that serves as a key for the sort pods comparison
     """
     return pod.metadata.creation_timestamp
+
+
+def restart_pods(
+    label_selector: str = None,
+    name_pattern: str = None,
+    qty: int = 1,
+    rand: bool = False,
+    ns: str = "default",
+    secrets: Secrets = None,
+):
+    """
+    Restart containers by killing the main process inside them.
+    This keeps the same pod but restarts the container.
+    """
+    api = create_k8s_api_client(secrets)
+    v1 = client.CoreV1Api(api)
+
+    pods = _select_pods(
+        v1, label_selector, name_pattern, False, rand, "fixed", qty, ns, "alphabetic"
+    )
+
+    restarted_containers = []
+
+    for pod in pods:
+        pod_name = pod.metadata.name
+        logger.info(f"Restarting container in pod {pod_name}")
+
+        try:
+            # Kill the main process to restart container
+            exec_command = ["pkill", "-f", "java"]  # Adjust for your application
+
+            resp = stream.stream(
+                v1.connect_get_namespaced_pod_exec,
+                pod_name,
+                ns,
+                command=exec_command,
+                stderr=True,
+                stdin=False,
+                stdout=True,
+                tty=False,
+                _preload_content=False,
+            )
+            resp.run_forever(timeout=10)
+
+            logger.info(f"Successfully restarted container in pod {pod_name}")
+            restarted_containers.append(pod_name)
+
+        except Exception as e:
+            logger.warning(f"Failed to restart container in pod {pod_name}: {e}")
+
+    return restarted_containers
+
 
 
 def _select_pods(
